@@ -4688,6 +4688,18 @@ input, select, textarea {
 
 	}
 
+	.button-row {
+		display: flex;
+		gap: 25px;
+		justify-content: center;
+	  }
+	  
+	  .button-row .actions.special {
+		margin: 0;
+		padding: 0;
+		width: auto;        
+	  }
+
 	.circular_image {
 		width: 200px;
 		height: 200px;
@@ -4707,4 +4719,6 @@ input, select, textarea {
 	}
 	
 
-	
+	.post.featured p {
+		font-style: normal;  /* override italic */
+	}
