@@ -1,0 +1,500 @@
+---
+title: "GLM Final Project"
+format: html
+editor: visual
+---
+
+```{r}
+#| include: FALSE
+library(dplyr)
+library(ggplot2)
+library(car)
+library(pROC)
+library(tidyverse)
+library(VGAM)
+library(olsrr)
+library(pscl)
+library(performance)
+```
+
+## Importing The Data
+
+```{r}
+prostate <- read.csv("Prostate.csv", header=TRUE)
+```
+
+## 1
+
+**Prostate Antigen Level:**
+
+```{r}
+ggplot(prostate, aes(x = psa)) +
+  geom_histogram(fill = "skyblue", color = "black", aes(y = after_stat(density))) +
+  labs(title = "Prostate Antigen Level", x = "Values", y = "Density") +
+  theme_minimal()
+```
+
+psa does not need to be transformed to a factor.
+
+**Volume of Tumor:**
+
+```{r}
+ggplot(prostate, aes(x = vol)) +
+  geom_histogram(fill = "skyblue", color = "black", aes(y = after_stat(density))) +
+  labs(title = "Volume of Tumor", x = "Values", y = "Density") +  
+  theme_minimal()
+```
+
+vol does not need to be converted to a factor.
+
+**Weight of Prostate Gland:**
+
+```{r}
+ggplot(prostate, aes(x = wt)) +
+  geom_histogram(fill = "skyblue", color = "black", aes(y = after_stat(density))) +
+  labs(title = "Weight of Prostate Gland", x = "Values", y = "Density") + 
+  theme_minimal()
+```
+
+wt does not need to be converted to a factor.
+
+**Age:**
+
+```{r}
+ggplot(prostate, aes(x = age)) +
+  geom_histogram(fill = "skyblue", color = "black", aes(y = after_stat(density))) +
+  labs(title = "Age of Patient", x = "Values", y = "Density") +  
+  theme_minimal()
+```
+
+Age does not need to be converted to a factor.
+
+**Benign Prostate Hyperplasia:**
+
+```{r}
+ggplot(prostate, aes(x = bph)) +
+  geom_histogram(fill = "skyblue", color = "black", aes(y = after_stat(density))) +
+  labs(title = "Benign Prostate Hyperplasia", x = "Values", y = "Density") +  
+  theme_minimal()
+```
+
+bph does not need to be converted to a factor.
+
+**Invaded Seminal Vesicle:**
+
+```{r}
+ggplot(prostate, aes(x = inv)) +
+  geom_histogram(fill = "skyblue", color = "black", aes(y = after_stat(density))) +
+  labs(title = "Invaded Seminal Vesicle", x = "Values", y = "Density") +  
+  theme_minimal()
+```
+
+This variable is currently quantitative but it should be categorical. This is apparent from both only two values being taken by observations (looking at the histogram) and the data description pdf file. So I will convert it to a factor.
+
+```{r}
+prostate <- mutate(prostate, 
+                   inv=factor(inv))
+```
+
+**Capsular Penetration:**
+
+```{r}
+ggplot(prostate, aes(x = cap)) +
+  geom_histogram(fill = "skyblue", color = "black", aes(y = after_stat(density))) +
+  labs(title = "Degree of Capsular Penetration", x = "Values", y = "Density") +  
+  theme_minimal()
+```
+
+cap does not need to be converted to a factor.
+
+**Cancer Grade:**
+
+```{r}
+ggplot(prostate, aes(x = grade)) +
+  geom_histogram(fill = "skyblue", color = "black", aes(y = after_stat(density))) +
+  labs(title = "Severity of Cancer", x = "Values", y = "Density") +  
+  theme_minimal()
+```
+
+This needs to be transformed to a categorical variable, it is our response variable and has 3 levels and should be ordered.
+
+```{r}
+prostate <- mutate(prostate, 
+                   grade=factor(grade, ordered=TRUE))
+```
+
+## 2
+
+Initial model with all main effects.
+
+```{r}
+m1 <- vglm(grade~psa+vol+wt+age+bph+inv+cap, family=cumulative(parallel=TRUE), data=prostate)
+```
+
+## 3
+
+We aren't able to obtain the VIFs in the cumulative proportional odds because of the capabilities of functions we have available to us. So, I group two of the cancer severity grades into one group (severity level 8 converted to 7) and run a binomial logit glm and use the vif command. Based on the documentation for this, a vector of VIFs is returned. "A vector of VIFs, OR a matrix containing one row for each term, and columns for the GVIF, df, and adjusted GVIF".
+
+```{r}
+prostate_updated <- prostate
+for (i in 1:nrow(prostate_updated)){
+  if (prostate_updated[i, 8] == 8) {
+    prostate_updated[i, 8] <- 7
+  }
+}
+
+two.group.m1 <- glm(grade~psa+vol+wt+age+bph+inv+cap, family=binomial(link="logit"), data=prostate_updated)
+vif(two.group.m1, type="terms")
+```
+
+Our cutoff values are 4 and 9 for when we should be concerned about VIF. These values are all below these thresholds thus no issues with multicollinearity.
+
+## 4
+
+Since we cannot use the infIndexPlot function directly because we are using the vglm function, similarly to the process of how we assessed the VIFs, we can fit glm with a binomial random component and logit link to a transformed 2 level cancer group dataset. The cooks distance will depend on which 2 cancer levels we bin together so we will have to fit all possible logits. That is, a model for group 6 and 7 vs 8, 6 and 8 vs 7, and 7 and 8 vs 6.
+
+```{r}
+cooks.cutoff <- qf(.5, 9, 97-9)
+cooks.cutoff
+```
+
+We will use a cutoff value of .934, if an observation has cooks distance larger than this we will remove it from the analysis.
+
+**group 7 and 8 vs 6:**
+
+Already have this model saved from the previous section
+
+```{r}
+infIndexPlot(two.group.m1,vars=c("Cook"))
+```
+
+No observations have cooks distance large than the cutoff.
+
+**Group 6 and 8 vs 7:**
+
+```{r}
+prostate_updated <- prostate
+for (i in 1:nrow(prostate_updated)){
+  if (prostate_updated[i, 8] == 8) {
+    prostate_updated[i, 8] <- 6
+  }
+}
+
+two.group.m2 <- glm(grade~psa+vol+wt+age+bph+inv+cap, family=binomial(link="logit"), data=prostate_updated)
+infIndexPlot(two.group.m2,vars=c("Cook"))
+```
+
+Again no observations above the cutoff.
+
+**Group 6 and 7 vs 8:**
+
+```{r}
+prostate_updated <- prostate
+for (i in 1:nrow(prostate_updated)){
+  if (prostate_updated[i, 8] == 7) {
+    prostate_updated[i, 8] <- 6
+  }
+}
+
+two.group.m3 <- glm(grade~psa+vol+wt+age+bph+inv+cap, family=binomial(link="logit"), data=prostate_updated)
+infIndexPlot(two.group.m3,vars=c("Cook"))
+```
+
+Again we have no observations above the cutoff.
+
+## 5
+
+```{r}
+m2 <- vglm(grade~(psa+vol+wt+age+bph+inv+cap)^2, family=cumulative(parallel=TRUE), data=prostate)
+# anova.vglm(m2, type="II", test="LRT")
+summary(m2)
+```
+
+## 6
+
+```{r}
+m3 <- vglm(grade~psa+vol+wt+age+bph+inv+cap+psa:vol+psa:wt+psa:bph+psa:inv+vol:wt+vol:bph+vol:age+vol:inv+vol:cap+wt:age+wt:bph+wt:inv+wt:cap+age:bph+age:inv+bph:inv+bph:cap+inv:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m3, type="II", test="LRT")
+```
+
+## 7
+
+```{r}
+m4 <- vglm(grade~psa+vol+wt+age+bph+inv+cap+psa:vol+psa:wt+psa:bph+psa:inv+vol:age+wt:age+wt:bph+wt:inv+wt:cap+age:inv+bph:inv+inv:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m4, type="II", test="LRT")
+```
+
+## 8
+
+```{r}
+m5 <- vglm(grade~psa+vol+wt+age+bph+inv+cap+psa:vol+vol:age+wt:age+wt:cap+bph:inv+inv:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m5, type="II", test="LRT")
+```
+
+## 9
+
+```{r}
+m6 <- vglm(grade~psa+vol+wt+age+bph+inv+cap+psa:vol+vol:age+wt:age+wt:cap+bph:inv, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m6, type="II", test="LRT")
+```
+
+## 10
+
+```{r}
+m7 <- vglm(grade~psa+vol+wt+age+bph+inv+cap+psa:vol+vol:age+wt:age+wt:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m7, type="II", test="LRT")
+```
+
+## 11
+
+```{r}
+m8 <- vglm(grade~psa+vol+wt+age+inv+cap+psa:vol+vol:age+wt:age+wt:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m8, type="II", test="LRT")
+```
+
+## 12
+
+```{r}
+m9 <- vglm(grade~psa+vol+wt+age+cap+psa:vol+vol:age+wt:age+wt:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m9, type="II", test="LRT")
+```
+
+## 13
+
+```{r}
+m10 <- vglm(grade~psa+vol+wt+age+cap+vol:age+wt:age+wt:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m10, type="II", test="LRT")
+```
+
+## 14
+
+```{r}
+m11 <- vglm(grade~psa+vol+wt+age+cap+wt:age+wt:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m11, type="II", test="LRT")
+```
+
+## 15
+
+```{r}
+m12 <- vglm(grade~psa+wt+age+cap+wt:age+wt:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m12, type="II", test="LRT")
+```
+
+## 16
+
+```{r}
+m13 <- vglm(grade~psa+wt+age+cap+wt:cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m13, type="II", test="LRT")
+```
+
+This model seems to be good based on the significance of predictors. The only non significant predictor based on 10% false discover is wt. However this variable is present in a significant interaction so we are going to keep it.
+
+## 17
+
+Checking AIC of model 13.
+
+```{r}
+AICvlm(m13)
+```
+
+## 18
+
+```{r}
+m14 <- vglm(grade~psa+wt+age+cap+wt:cap, family=cumulative(parallel=TRUE, link="probitlink"), data=prostate)
+AICvlm(m14)
+```
+
+The probit model has a larger AIC and therefore is not as good as the logit model.
+
+## 19
+
+```{r}
+m15 <- vglm(grade~psa+wt+age+cap+wt:cap, family=cumulative(parallel=TRUE, link="clogloglink"), data=prostate)
+AICvlm(m15)
+```
+
+This leads to a larger AIC than the logit model. Not as good of a model as the logit model.
+
+## 20
+
+```{r}
+# m16 <- vglm(grade~psa+wt+age+cap+wt:cap,family=cumulative, data=prostate)
+# AICvlm(m16)
+```
+
+## 21
+
+```{r}
+X2 <- sum(residuals(m13, type="pearson")^2)
+df <- 187
+dispersion_ratio <- X2 / df
+dispersion_ratio
+```
+
+This does not give any evidence of overdispersion, if anything it suggests underdispersion.
+
+## 22
+
+```{r}
+two.group.m4 <- glm(grade~psa+scale(wt)+age+cap+wt:cap, family=binomial(link="logit"), data=prostate_updated)
+vif(two.group.m4)
+```
+
+## 23
+
+```{r}
+two.group.m5 <- glm(grade~psa+wt+age+cap, family=binomial(link="logit"), data=prostate_updated)
+vif(two.group.m5)
+```
+
+## 24
+
+```{r}
+m.17 <- vglm(grade~psa+wt+age+cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m.17, type="II", test="LRT")
+```
+
+## 25
+
+```{r}
+m.18 <- vglm(grade~psa+age+cap, family=cumulative(parallel=TRUE), data=prostate)
+anova.vglm(m.18, type="II", test="LRT")
+```
+
+## 26
+
+```{r}
+AICvlm(m.18)
+```
+
+## 27
+
+```{r}
+two.group.m6 <- glm(grade~psa+age+cap, family=binomial(link="logit"), data=prostate_updated)
+vif(two.group.m6)
+```
+
+## 28
+
+```{r}
+cooks.cutoff <- qf(.5, 3, 97-3)
+cooks.cutoff
+```
+
+We will use a cutoff value of .794, if an observation has cooks distance larger than this we will remove it from the analysis.
+
+**Group 7 and 8 vs 6:**
+
+Already have this model saved from the previous section
+
+```{r}
+prostate_updated <- prostate
+for (i in 1:nrow(prostate_updated)){
+  if (prostate_updated[i, 8] == 7) {
+    prostate_updated[i, 8] <- 8
+  }
+}
+
+two.group.m7 <- glm(grade~psa+age+cap, family=binomial(link="logit"), data=prostate_updated)
+infIndexPlot(two.group.m7,vars=c("Cook"))
+```
+
+No observations have cooks distance large than the cutoff.
+
+**Group 6 and 8 vs 7:**
+
+```{r}
+prostate_updated <- prostate
+for (i in 1:nrow(prostate_updated)){
+  if (prostate_updated[i, 8] == 8) {
+    prostate_updated[i, 8] <- 6
+  }
+}
+
+two.group.m8 <- glm(grade~psa+age+cap, family=binomial(link="logit"), data=prostate_updated)
+infIndexPlot(two.group.m8,vars=c("Cook"))
+```
+
+Again no observations above the cutoff.
+
+**Group 6 and 7 vs 8:**
+
+```{r}
+prostate_updated <- prostate
+for (i in 1:nrow(prostate_updated)){
+  if (prostate_updated[i, 8] == 7) {
+    prostate_updated[i, 8] <- 6
+  }
+}
+
+two.group.m9 <- glm(grade~psa+age+cap, family=binomial(link="logit"), data=prostate_updated)
+infIndexPlot(two.group.m9,vars=c("Cook"))
+```
+
+Again no observations above the cutoff.
+
+## 29
+
+```{r}
+X2 <- sum(residuals(m.18, type="pearson")^2)
+df <- 189
+dispersion_ratio <- X2 / df
+dispersion_ratio
+```
+
+```{r}
+pchisq(X2,df,lower.tail=FALSE)
+```
+
+We have some evidence of overdispersion but it is not convincing evidence.
+
+## 30
+
+```{r}
+anova.vglm(m.18,m2,type="I",test="LRT")
+```
+
+## 31
+
+```{r}
+psa_levels <- c(0.65, 13.33, 265.07)
+age_levels <- c(41, 65, 79)
+cap_levels <- c(0, 0.45, 18.17)
+combinations <- expand.grid(psa = psa_levels, age = age_levels, cap = cap_levels)
+
+x.new <- data.frame(psa=(combinations$psa),age=c(combinations$age),cap=c(combinations$cap))
+m18.pred <- predictvglm(m.18,x.new,type="response")
+m18.pred.table <- data.frame(x.new,m18.pred) 
+colnames(m18.pred.table) <- c("psa","age","cap","grade=6","grade=7","grade=8")
+
+m18.pred.table$`grade=6` <- round(m18.pred.table$`grade=6`, 4)
+m18.pred.table$`grade=7` <- round(m18.pred.table$`grade=7`, 4)
+m18.pred.table$`grade=8` <- round(m18.pred.table$`grade=8`, 4)
+
+m18.pred.table
+```
+
+## 32
+
+```{r}
+coefs <- coef(m.18)
+coefs
+```
+
+```{r}
+new.x <- data.frame(psa=0, age=0, cap=0)
+pred <- predictvglm(m.18,new.x,type="response")
+pred
+```
+
+```{r}
+exp(coefs[3])
+```
+
+```{r}
+exp(coefs[4])
+```
+
+```{r}
+exp(coefs[5])
+```

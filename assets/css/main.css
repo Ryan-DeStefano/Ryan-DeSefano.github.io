@@ -4716,6 +4716,7 @@ input, select, textarea {
 		width: 100%;
 		height: 100%;
 		object-fit: cover;
+		object-position: center top; /* tweak this to control what part shows */
 	}
 	
 
